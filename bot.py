@@ -2168,14 +2168,48 @@ class TripleConfluenceBot:
             return
 
         avg = float(result.get('avgPrice') or 0)
+        order_id = result.get('orderId')
+        if avg <= 0 and order_id:
+            await asyncio.sleep(0.4)
+            ord_info = await self._fapi_request('GET', '/fapi/v1/order', {
+                'symbol': symbol, 'orderId': order_id
+            }, signed=True, quiet=(-2013,))
+            if isinstance(ord_info, dict):
+                avg = float(ord_info.get('avgPrice') or 0)
+
+        if avg <= 0:
+            positions = await self._fapi_request('GET', '/fapi/v2/positionRisk',
+                                                 {'symbol': symbol}, signed=True)
+            if isinstance(positions, list):
+                for p in positions:
+                    if p.get('symbol') == symbol and float(p.get('positionAmt') or 0) != 0:
+                        avg = float(p.get('entryPrice') or 0)
+                        break
+
         entry_price = avg if avg > 0 else analysis['price']
+        risk_dist = analysis.get('risk_dist') or abs(analysis['price'] - analysis['sl'])
+        if want_buy:
+            sl_price = entry_price - risk_dist
+            tp1_price = entry_price + risk_dist * float(self.triple.cfg.get('rr1', 1.0))
+            tp2_price = entry_price + risk_dist * float(self.triple.cfg.get('rr2', 2.0))
+            tp3_price = entry_price + risk_dist * float(self.triple.cfg.get('rr3', 3.0))
+        else:
+            sl_price = entry_price + risk_dist
+            tp1_price = entry_price - risk_dist * float(self.triple.cfg.get('rr1', 1.0))
+            tp2_price = entry_price - risk_dist * float(self.triple.cfg.get('rr2', 2.0))
+            tp3_price = entry_price - risk_dist * float(self.triple.cfg.get('rr3', 3.0))
+
+        analysis['sl'] = sl_price
+        analysis['tp1'] = tp1_price
+        analysis['tp2'] = tp2_price
+        analysis['tp3'] = tp3_price
 
         trade_data = {
             'symbol': symbol, 'side': side, 'entry_price': entry_price,
             'quantity': quantity,
             'orig_quantity': quantity,
-            'sl': analysis['sl'], 'tp': analysis['tp1'],
-            'tp2': analysis.get('tp2'), 'tp3': analysis.get('tp3'),
+            'sl': sl_price, 'tp': tp1_price,
+            'tp2': tp2_price, 'tp3': tp3_price,
             'score': analysis.get('score', 8),
             'trailing_active': False, 'highest_price': entry_price,
             'lowest_price': entry_price, 'entry_time': time.time(),
