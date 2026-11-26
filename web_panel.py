@@ -564,6 +564,15 @@ __TABS2__
         <div class="note">مطابق Pine: <code>adxLen=14, adxMinLevel=20.0</code> — عند التفعيل يرفض الإشارات عندما ADX[1] تحت الحد.</div>
       </div>
 
+      <!-- Gemini AI Validator -->
+      <div class="card">
+        <h3>🤖 <b>Gemini AI Validator</b> — فلتر الذكاء الاصطناعي <span class="tag buy">تؤثر على التداول</span></h3>
+        <label class="kvlabel" style="display:flex;align-items:center;gap:8px">
+          <input type="checkbox" id="cf_useGeminiFilter"> تفعيل تحليل الصفقة عبر Gemini قبل التنفيذ
+        </label>
+        <div class="note">يستشير نموذج Gemini 2.5 Flash المجاني لتقييم الزخم والمخاطر قبل إرسال الأمر إلى Binance.</div>
+      </div>
+
       <!-- H. Trade Setup -->
       <div class="card">
         <h3>📐 H. <b>Trade Setup</b> — الأهداف والمخاطرة <span class="tag buy">تؤثر على التداول</span></h3>
