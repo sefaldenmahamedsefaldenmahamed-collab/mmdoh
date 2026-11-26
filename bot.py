@@ -2095,7 +2095,7 @@ class TripleConfluenceBot:
         }
 
     # ─── التنفيذ ───
-     async def ask_gemini_validator(self, analysis):
+    async def ask_gemini_validator(self, analysis):
         """يرسل تفاصيل الصفقة مع آخر الشموع إلى Google Gemini API لتقييمها قبل التنفيذ."""
         if not self.triple.cfg.get('useGeminiFilter', True):
             return True, "فلتر Gemini معطّل من الإعدادات"
