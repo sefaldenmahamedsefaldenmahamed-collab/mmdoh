@@ -382,6 +382,12 @@ TRIPLE_CONFIG = {
     # ── فريم الاستراتيجية ──
     "timeframe": "15m",
 
+    "timeframe": "15m",
+    # ── فلتر الذكاء الاصطناعي Gemini ──
+    "useGeminiFilter": True,
+    "geminiModel": "gemini-2.5-flash",
+
+  
     # ════════════════════════════════════════════════════════════════
     #  I. إعدادات العرض / التنبيهات / الألوان (مطابقة Pine Script — مرجعية فقط)
     # ════════════════════════════════════════════════════════════════
@@ -2089,7 +2095,76 @@ class TripleConfluenceBot:
         }
 
     # ─── التنفيذ ───
-    async def execute_trade(self, analysis):
+         async def ask_gemini_validator(self, analysis):
+        """يرسل تفاصيل الصفقة مع آخر الشموع إلى Google Gemini API لتقييمها قبل التنفيذ."""
+        if not self.triple.cfg.get('useGeminiFilter', True):
+            return True, "فلتر Gemini معطّل من الإعدادات"
+
+        gemini_key = os.environ.get('GEMINI_API_KEY', '').strip()
+        if not gemini_key:
+            return True, "مفتاح GEMINI_API_KEY غير مضاف — تخطي الفلتر"
+
+        symbol = analysis['symbol']
+        tf = self.triple.cfg.get('timeframe', '15m')
+        model = self.triple.cfg.get('geminiModel', 'gemini-2.5-flash')
+
+        # جلب آخر 8 شموع مغلقة ليفهم Gemini سياق السوق والزخم
+        candles_summary = "غير متوفر"
+        try:
+            df = await self.get_klines(symbol, tf, 12)
+            if df is not None and len(df) >= 5:
+                recent = df.iloc[-9:-1]
+                rows = [
+                    f"O:{r['open']:.4g} H:{r['high']:.4g} L:{r['low']:.4g} C:{r['close']:.4g} V:{int(r['volume'])}"
+                    for _, r in recent.iterrows()
+                ]
+                candles_summary = " | ".join(rows)
+        except Exception:
+            pass
+
+        prompt = f"""أنت مدير مخاطر تداول عقود آجلة (Crypto Futures) صارم. قيّم هذه الإشارة قبل تنفيذها:
+- الزوج: {symbol} | الفريم: {tf}
+- الاتجاه المقترح: {analysis['direction']}
+- سعر الدخول: {analysis['price']}
+- وقف الخسارة (SL): {analysis['sl']}
+- الأهداف: TP1={analysis['tp1']} | TP2={analysis.get('tp2')} | TP3={analysis.get('tp3')}
+- مؤشرات التقاطع الثلاثي: {json.dumps(analysis.get('components', {}), ensure_ascii=False)}
+- حركة آخر 8 شموع: {candles_summary}
+
+قواعد التقييم:
+1. ارفض (REJECT) إذا كان الدخول عكس زخم شموع عنيفة جداً أو في ذروة تشبع متطرف (مثل RSI فوق 78 للشراء أو تحت 22 للبيع) أو إذا كانت المسافة للوقف غير منطقية.
+2. وافق (APPROVE) إذا كان الهيكل السعري والزخم يدعمان استمرار الحركة نحو TP1 على الأقل.
+
+أجب بصيغة JSON فقط بدون أي كلام خارجها:
+{{"decision": "APPROVE" أو "REJECT", "reason": "السبب بالعربية في أقل من 12 كلمة"}}"""
+
+        url = f"https://googleapis.com{model}:generateContent?key={gemini_key}"
+        headers = {"Content-Type": "application/json"}
+        payload = {
+            "contents": [{"parts": [{"text": prompt}]}],
+            "generationConfig": {
+                "temperature": 0.1,
+                "responseMimeType": "application/json"
+            }
+        }
+
+        try:
+            timeout = aiohttp.ClientTimeout(total=12)
+            async with self.session.post(url, headers=headers, json=payload, timeout=timeout) as resp:
+                if resp.status != 200:
+                    logger.warning(f"⚠️ فشل اتصال Gemini ({resp.status}) — السماح بالصفقة احتياطياً")
+                    return True, f"تخطي (خطأ اتصال {resp.status})"
+                data = await resp.json()
+                content = data['candidates']['content']['parts']['text'].strip()
+                res = json.loads(content)
+                approved = str(res.get('decision', '')).upper() == 'APPROVE'
+                reason = str(res.get('reason', 'لا يوجد سبب'))[:80]
+                return approved, reason
+        except Exception as e:
+            logger.warning(f"⚠️ استثناء في فلتر Gemini: {e}")
+            return True, "تجاوز تلقائي بسبب المهلة"
+
+     async def execute_trade(self, analysis):
         if not self.TRADE_ENABLED:
             return
         if self.EMERGENCY_MODE:
@@ -2134,6 +2209,21 @@ class TripleConfluenceBot:
                                context=f"المتاح {available:.2f}$ < المطلوب {margin * 1.2:.2f}$")
             return
 
+            # ── فحص الصفقة عبر وكيل Gemini قبل التنفيذ ──
+        approved, gemini_reason = await self.ask_gemini_validator(analysis)
+        if not approved:
+            msg = f"🤖 Gemini رفض صفقة {symbol} ({analysis['direction']}): {gemini_reason}"
+            logger.info(msg)
+            self._log_event('TRIPLE', 'GEMINI_REJECT', msg)
+            try:
+                await panel_notify('TRIPLE', f"🤖 Gemini رفض — {symbol}", gemini_reason, level='bad')
+            except Exception:
+                pass
+            return
+        else:
+            self._log_event('TRIPLE', 'GEMINI_OK', f"🤖 Gemini وافق على {symbol}: {gemini_reason}")
+
+    
         notional = margin * self.LEVERAGE
         # ✅ التحقق من فلاتر stepSize و tickSize الحقيقية من exchangeInfo
         #    لو لم تُحمَل بيانات الفلاتر بعد نرفض الدخول (لا تنفيذ بأحجام غير صحيحة)
