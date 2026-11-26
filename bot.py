@@ -1918,6 +1918,12 @@ class TripleConfluenceBot:
                 continue
             pos_side = 'BUY' if pos['amt'] > 0 else 'SELL'
             pos_qty = abs(pos['amt'])
+            pos_entry = float(pos.get('entryPrice') or 0)
+            if pos_entry > 0 and abs(pos_entry - float(trade.get('entry_price') or 0)) > 1e-8:
+                trade['entry_price'] = pos_entry
+                await self.db.save_trade(trade)
+                if sym not in adjusted:
+                    adjusted.append(sym)
             if trade['side'] != pos_side:
                 self._log_event('TRIPLE', 'SYNC',
                                 f"⚠️ {sym}: اتجاه المركز الفعلي ({pos_side}) معاكس للسجل — تصحيح")
@@ -1925,14 +1931,8 @@ class TripleConfluenceBot:
                 trade['quantity'] = pos_qty
                 trade['orig_quantity'] = pos_qty
                 await self.db.save_trade(trade)
-                adjusted.append(sym)
-            elif abs(pos_qty - float(trade.get('quantity') or 0)) > max(pos_qty * 0.02, 1e-9):
-                self._log_event('TRIPLE', 'SYNC',
-                                f"🔧 {sym}: كمية السجل {trade['quantity']} ≠ المركز الفعلي "
-                                f"{pos_qty} — تصحيح الكمية")
-                trade['quantity'] = pos_qty
-                await self.db.save_trade(trade)
-                adjusted.append(sym)
+                if sym not in adjusted:
+                    adjusted.append(sym)
 
         orphan = [s for s in open_positions if s not in self.active_trades]
         self.last_sync_removed = removed
