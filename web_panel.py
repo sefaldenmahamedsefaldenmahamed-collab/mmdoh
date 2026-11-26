@@ -1852,26 +1852,30 @@ def _strategy_handlers(bot, m):
         deleted = []
         try:
             async with aiosqlite.connect(bot.db.db_name) as db:
-                try:
-                    cur = await db.execute(f"DELETE FROM {tables[0]} WHERE exit_ts IS NOT NULL")
-                    deleted.append(f"{tables[0]}: {cur.rowcount}")
-                    await cur.close()
-                except Exception:
-                    pass
-                try:
-                    cur = await db.execute(f"DELETE FROM {tables[1]}")
-                    deleted.append(f"{tables[1]}: {cur.rowcount}")
-                    await cur.close()
-                except Exception:
-                    pass
-                try:
-                    if PANEL_DB:
-                        cur = await db.execute("DELETE FROM panel_events")
-                        deleted.append(f"panel_events: {cur.rowcount}")
+                for sql_cmd, label in (
+                    (f"DELETE FROM {tables[0]} WHERE exit_ts IS NOT NULL", tables[0]),
+                    (f"DELETE FROM {tables[1]}", tables[1]),
+                    ("DELETE FROM daily_stats", "daily_stats"),
+                    ("DELETE FROM signal_log", "signal_log"),
+                    ("DELETE FROM panel_events", "panel_events"),
+                ):
+                    try:
+                        cur = await db.execute(sql_cmd)
+                        deleted.append(f"{label}: {cur.rowcount}")
                         await cur.close()
-                except Exception:
-                    pass
+                    except Exception:
+                        pass
                 await db.commit()
+        except Exception:
+            pass
+        try:
+            if hasattr(bot, 'stats_triple') and isinstance(bot.stats_triple, dict):
+                bot.stats_triple = {'trades': len(getattr(bot, 'active_trades', {}) or {}),
+                                    'wins': 0, 'losses': 0, 'net_pnl': 0.0}
+            if hasattr(bot, 'stats') and isinstance(bot.stats, dict):
+                bot.stats['trades_closed'] = 0
+            if hasattr(bot, 'triple_events'):
+                bot.triple_events.clear()
         except Exception:
             pass
         await notify(m['skey'], f"🗑 مسح بيانات {m['name']}", '، '.join(deleted) or 'لا شيء')
