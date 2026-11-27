@@ -2164,7 +2164,7 @@ class TripleConfluenceBot:
             logger.warning(f"⚠️ استثناء في فلتر Gemini: {e}")
             return True, "تجاوز تلقائي بسبب المهلة"
 
-    async def execute_trade(self, analysis):
+     async def execute_trade(self, analysis):
         if not self.TRADE_ENABLED:
             return
         if self.EMERGENCY_MODE:
